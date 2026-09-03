@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -17,6 +19,32 @@ from vllm.v1.attention.ops.chunked_prefill_paged_decode import (
 )
 
 DEVICE_TYPE = current_platform.device_type
+
+
+@pytest.mark.parametrize("is_rocm", [False, True])
+@pytest.mark.parametrize(
+    "fallback", ["Triton split-KV decode", "Triton paged attention"]
+)
+def test_rocm_native_fallback_warning_is_platform_gated(
+    monkeypatch: pytest.MonkeyPatch, is_rocm: bool, fallback: str
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(
+        decode_ops,
+        "current_platform",
+        SimpleNamespace(is_rocm=lambda: is_rocm),
+    )
+    monkeypatch.setattr(
+        decode_ops,
+        "logger",
+        SimpleNamespace(warning_once=messages.append),
+    )
+
+    decode_ops._warn_rocm_native_fallback(fallback)
+
+    assert len(messages) == int(is_rocm)
+    if is_rocm:
+        assert fallback in messages[0]
 
 
 @pytest.mark.skipif(not on_gfx1151(), reason="gfx1151 native split-KV dispatch test")
