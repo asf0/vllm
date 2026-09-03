@@ -448,10 +448,6 @@ def chunked_prefill_paged_decode(
             fp8_out_scale=output_scale,
         )
     else:
-        logger.warning_once(
-            "Cannot use ROCm custom paged attention kernel,"
-            " falling back to Triton implementation."
-        )
         real_block_size = value_cache.shape[3]
         # The standard model directly uses the original block_size.
         # Non-standard 544 uses 32 to accommodate integer division logic.
@@ -476,7 +472,26 @@ def chunked_prefill_paged_decode(
         else:
             processed_block_table = block_table.to(torch.int32)
 
-        from vllm.platforms.rocm import on_gfx1x
+        from vllm.platforms.rocm import on_gfx1x, on_gfx1151
+
+        # The gfx1151 specialization uses wave32 WMMA for head_dim=256 and
+        # treats a large physical page as a sequence of independent 16-token
+        # compute tiles. Keep the legacy 16/32-page native path above intact;
+        # this branch is reached only when that older kernel is ineligible.
+        use_native_splitkv_decode = (
+            on_gfx1151()
+            and query.dtype == torch.bfloat16
+            and head_size == 256
+            and num_queries_per_kv == 6
+            and block_size % 16 == 0
+            and key_cache.stride(4) == 1
+            and value_cache.stride(3) == 1
+            and not use_alibi_slopes
+            and sliding_window == 0
+            and sinks is None
+            and output_scale is None
+            and kv_cache_dtype in ("auto", "fp8", "fp8_e4m3")
+        )
 
         # Split kv is currently only tuned for gfx1x with head dim 256.
         use_splitkv_decode = (
@@ -489,7 +504,38 @@ def chunked_prefill_paged_decode(
             and output_scale is None
             and "fp8" not in kv_cache_dtype
         )
-        if use_splitkv_decode:
+        if use_native_splitkv_decode:
+            native_num_splits = _get_rocm_native_num_splits(
+                batch_size=num_seqs,
+                max_seq_len=max_seq_len,
+                max_num_splits=_MAX_SPLITS,
+                kv_cache_dtype=kv_cache_dtype,
+            )
+            logger.info_once(
+                "Using ROCm native WMMA split-KV paged decode "
+                f"({native_num_splits} splits)."
+            )
+            paged_attention_rocm_splitkv_decode(
+                query=query,
+                key_cache=key_cache,
+                value_cache=value_cache,
+                block_tables=processed_block_table,
+                seq_lens=seq_lens,
+                scale=sm_scale,
+                output=output,
+                actual_max_splits=native_num_splits,
+                max_seq_len=max_seq_len,
+                query_start_loc=query_start_loc,
+                filter_by_query_len=True,
+                kv_cache_dtype=kv_cache_dtype,
+                k_scale=k_scale,
+                v_scale=v_scale,
+            )
+        elif use_splitkv_decode:
+            logger.warning_once(
+                "Cannot use a ROCm native paged attention kernel; "
+                "using Triton split-KV decode."
+            )
             paged_attention_2d_splitkv_decode(
                 query=query,
                 key_cache=key_cache,
@@ -504,6 +550,10 @@ def chunked_prefill_paged_decode(
                 filter_by_query_len=True,
             )
         else:
+            logger.warning_once(
+                "Cannot use a ROCm native paged attention kernel; "
+                "using Triton paged attention."
+            )
             kernel_paged_attention_2d[
                 (
                     num_seqs,
@@ -563,6 +613,8 @@ def kernel_paged_attention_2d_splitkv(
     block_tables_ptr,  # [num_seqs, max_num_blocks_per_seq]
     seq_lens_ptr,  # [num_seqs]
     scale,
+    k_scale,
+    v_scale,
     num_query_heads: tl.constexpr,
     num_queries_per_kv: tl.constexpr,
     num_queries_per_kv_padded: tl.constexpr,
@@ -658,7 +710,7 @@ def kernel_paged_attention_2d_splitkv(
             + internal_offsets[None, :] * stride_k_cache_3
             + (offs_d[:, None] % x) * stride_k_cache_4
         )
-        K = tl.load(
+        K_load = tl.load(
             key_cache_ptr + k_offset,
             mask=dim_mask[:, None] & token_mask[None, :],
             other=0.0,
@@ -671,12 +723,19 @@ def kernel_paged_attention_2d_splitkv(
             + offs_d[None, :] * stride_v_cache_2
             + internal_offsets[:, None] * stride_v_cache_3
         )
-        V = tl.load(
+        V_load = tl.load(
             value_cache_ptr + v_offset,
             mask=token_mask[:, None] & dim_mask[None, :],
             other=0.0,
             eviction_policy="evict_last",
         )
+
+        if K_load.dtype.is_fp8():
+            K = (K_load.to(tl.float32) * tl.load(k_scale)).to(Q.dtype)
+            V = (V_load.to(tl.float32) * tl.load(v_scale)).to(Q.dtype)
+        else:
+            K = K_load
+            V = V_load
 
         S = scale * tl.dot(Q, K)
         S = tl.where(head_mask[:, None] & token_mask[None, :], S, float("-inf"))
@@ -910,6 +969,28 @@ def _get_num_splits(
     )
 
 
+def _get_rocm_native_num_splits(
+    batch_size: int,
+    max_seq_len: int,
+    max_num_splits: int,
+    kv_cache_dtype: str,
+) -> int:
+    """Split policy measured for the gfx1151 WMMA kernel.
+
+    A split retains at least 64 KV tokens. BF16 needs fewer splits once a
+    medium batch fills the device; FP8 benefits from 16 splits because its
+    packed conversion/LDS pipeline has more per-workgroup latency to hide.
+    """
+    max_useful_splits = max(1, _cdiv(max_seq_len, 64))
+    if "fp8" in kv_cache_dtype or batch_size <= 2:
+        desired_splits = 16
+    elif batch_size < 16:
+        desired_splits = 4
+    else:
+        desired_splits = 8
+    return min(desired_splits, max_num_splits, max_useful_splits)
+
+
 def paged_attention_2d_splitkv_decode(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -925,6 +1006,8 @@ def paged_attention_2d_splitkv_decode(
     max_num_splits: int = _MAX_SPLITS,
     query_start_loc: torch.Tensor | None = None,
     filter_by_query_len: bool = False,
+    k_scale: torch.Tensor | None = None,
+    v_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Decode-only paged attention launcher with split-KV.
 
@@ -939,6 +1022,10 @@ def paged_attention_2d_splitkv_decode(
     head_size = query.shape[2]
     num_kv_heads = key_cache.shape[1]
     physical_block_size = key_cache.shape[3]
+    if k_scale is None:
+        k_scale = torch.ones(1, device=query.device, dtype=torch.float32)
+    if v_scale is None:
+        v_scale = torch.ones(1, device=query.device, dtype=torch.float32)
     block_size = _choose_compute_block_size(physical_block_size)
     if block_size != 32:
         logger.warning_once(
@@ -980,8 +1067,8 @@ def paged_attention_2d_splitkv_decode(
             seq_lens_ptr=seq_lens,
             alibi_slopes_ptr=None,
             scale=scale,
-            k_scale=1.0,
-            v_scale=1.0,
+            k_scale=k_scale,
+            v_scale=v_scale,
             out_scale_inv=1.0,
             num_query_heads=num_query_heads,
             num_queries_per_kv=num_queries_per_kv,
@@ -1039,6 +1126,8 @@ def paged_attention_2d_splitkv_decode(
         block_tables,
         seq_lens,
         scale,
+        k_scale,
+        v_scale,
         num_query_heads=num_query_heads,
         num_queries_per_kv=num_queries_per_kv,
         num_queries_per_kv_padded=num_queries_per_kv_padded,
@@ -1093,5 +1182,90 @@ def paged_attention_2d_splitkv_decode(
         num_warps=4,
         num_stages=1,
         waves_per_eu=1,
+    )
+    return output
+
+
+def paged_attention_rocm_splitkv_decode(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    block_tables: torch.Tensor,
+    seq_lens: torch.Tensor,
+    scale: float,
+    output: torch.Tensor | None = None,
+    actual_max_splits: int | None = None,
+    max_seq_len: int | None = None,
+    partial_out: torch.Tensor | None = None,
+    partial_max: torch.Tensor | None = None,
+    partial_sum: torch.Tensor | None = None,
+    max_num_splits: int = _MAX_SPLITS,
+    query_start_loc: torch.Tensor | None = None,
+    filter_by_query_len: bool = False,
+    kv_cache_dtype: str = "auto",
+    k_scale: torch.Tensor | None = None,
+    v_scale: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Launch native ROCm split-KV decode with physical-page-independent tiles."""
+    if output is None:
+        output = torch.empty_like(query)
+
+    batch_size = seq_lens.shape[0] if filter_by_query_len else query.shape[0]
+    num_query_heads = query.shape[1]
+    head_size = query.shape[2]
+    num_kv_heads = key_cache.shape[1]
+    physical_page_size = key_cache.shape[3]
+
+    if max_seq_len is None:
+        max_seq_len = block_tables.shape[1] * physical_page_size
+    if actual_max_splits is None:
+        actual_max_splits = _get_num_splits(
+            batch_size,
+            num_kv_heads,
+            head_size,
+            _DEFAULT_COMPUTE_BLOCK_SIZE,
+            max_seq_len,
+            max_num_splits,
+        )
+    if not 1 <= actual_max_splits <= max_num_splits:
+        raise ValueError(
+            f"actual_max_splits ({actual_max_splits}) must be in [1, {max_num_splits}]."
+        )
+
+    partial_shape = (batch_size, num_query_heads, actual_max_splits)
+    if partial_out is None:
+        partial_out = torch.empty(
+            (*partial_shape, head_size), device=query.device, dtype=torch.float32
+        )
+    if partial_max is None:
+        partial_max = torch.empty(
+            partial_shape, device=query.device, dtype=torch.float32
+        )
+    if partial_sum is None:
+        partial_sum = torch.empty(
+            partial_shape, device=query.device, dtype=torch.float32
+        )
+    if k_scale is None:
+        k_scale = torch.ones(1, device=query.device, dtype=torch.float32)
+    if v_scale is None:
+        v_scale = torch.ones(1, device=query.device, dtype=torch.float32)
+
+    ops.paged_attention_rocm_splitkv(
+        output,
+        partial_out,
+        partial_max,
+        partial_sum,
+        query,
+        key_cache,
+        value_cache,
+        num_kv_heads,
+        scale,
+        block_tables,
+        seq_lens,
+        query_start_loc if filter_by_query_len else None,
+        physical_page_size,
+        kv_cache_dtype,
+        k_scale,
+        v_scale,
     )
     return output
