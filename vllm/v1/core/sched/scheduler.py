@@ -1522,7 +1522,9 @@ class Scheduler(SchedulerInterface):
     ) -> KVConnectorMetadata:
         return connector.build_connector_meta(scheduler_output)
 
-    def _get_new_block_ids_to_zero(self) -> list[int] | None:
+    def _get_new_block_ids_to_zero(
+        self,
+    ) -> list[int] | tuple[list[int], ...] | None:
         # Drain new attention block ids every step so the manager-side list
         # does not grow unbounded; only kv-cache zeroing consumes them.
         new_block_ids_to_zero = self.kv_cache_manager.take_new_block_ids()
@@ -1530,6 +1532,9 @@ class Scheduler(SchedulerInterface):
             return None
 
         if self._skip_zero_block_ids:
+            assert isinstance(new_block_ids_to_zero, list), (
+                "KV connectors are unsupported with multiple KV cache pools"
+            )
             skip = self._skip_zero_block_ids
             new_block_ids_to_zero = [b for b in new_block_ids_to_zero if b not in skip]
             skip.clear()
@@ -2994,6 +2999,7 @@ class Scheduler(SchedulerInterface):
             num_tokens_main_model=full_num_tokens,
             apply_admission_cap=True,
         )
+        assert isinstance(num_blocks, int)
         return num_blocks + self._spec_decode_step_blocks()
 
     def _spec_decode_step_blocks(self) -> int:
