@@ -25,6 +25,14 @@ _MAX_SPLITS = 16
 _DEFAULT_COMPUTE_BLOCK_SIZE = 32
 
 
+def _warn_rocm_native_fallback(fallback: str) -> None:
+    """Warn about a native ROCm fallback only when running on ROCm."""
+    if current_platform.is_rocm():
+        logger.warning_once(
+            f"Cannot use a ROCm native paged attention kernel; using {fallback}."
+        )
+
+
 # The split-kv kernel has the best performance when the
 # compute block size is 32.
 def _choose_compute_block_size(physical_block_size: int) -> int:
@@ -532,10 +540,7 @@ def chunked_prefill_paged_decode(
                 v_scale=v_scale,
             )
         elif use_splitkv_decode:
-            logger.warning_once(
-                "Cannot use a ROCm native paged attention kernel; "
-                "using Triton split-KV decode."
-            )
+            _warn_rocm_native_fallback("Triton split-KV decode")
             paged_attention_2d_splitkv_decode(
                 query=query,
                 key_cache=key_cache,
@@ -550,10 +555,7 @@ def chunked_prefill_paged_decode(
                 filter_by_query_len=True,
             )
         else:
-            logger.warning_once(
-                "Cannot use a ROCm native paged attention kernel; "
-                "using Triton paged attention."
-            )
+            _warn_rocm_native_fallback("Triton paged attention")
             kernel_paged_attention_2d[
                 (
                     num_seqs,
