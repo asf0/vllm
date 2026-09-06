@@ -6,18 +6,18 @@
 #include <cstdint>
 #include <string>
 #ifdef USE_ROCM
-#include <hip/hip_bf16.h>
-#include <hip/hip_fp16.h>
-#include <hip/hip_runtime.h>
+  #include <hip/hip_bf16.h>
+  #include <hip/hip_fp16.h>
+  #include <hip/hip_runtime.h>
 #else
-#include <cuda_bf16.h>
-#include <cuda_fp16.h>
-#include <cuda_runtime.h>
+  #include <cuda_bf16.h>
+  #include <cuda_fp16.h>
+  #include <cuda_runtime.h>
 #endif
 
 #include "../torch_utils.h"
 #ifndef USE_ROCM
-#include "../../cuda_compat.h"
+  #include "../../cuda_compat.h"
 #endif
 
 namespace {
@@ -40,8 +40,7 @@ template <typename StateT>
 __device__ __forceinline__ void cp_async_16b(StateT* smem_ptr,
                                              const StateT* gmem_ptr) {
 #ifdef USE_ROCM
-  *reinterpret_cast<int4*>(smem_ptr) =
-      *reinterpret_cast<const int4*>(gmem_ptr);
+  *reinterpret_cast<int4*>(smem_ptr) = *reinterpret_cast<const int4*>(gmem_ptr);
 #else
   const uint32_t smem_addr =
       static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
@@ -194,16 +193,15 @@ __device__ __forceinline__ Sum2 warp_reduce_sum_pair(float x, float y) {
 
 template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
 __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
-    const bf16_t* __restrict__ mixed_qkv,
-    const bf16_t* __restrict__ a, const bf16_t* __restrict__ b,
-    const float* __restrict__ a_log, const void* __restrict__ dt_bias,
-    const int* __restrict__ state_indices, const int* __restrict__ cu_seqlens,
+    const bf16_t* __restrict__ mixed_qkv, const bf16_t* __restrict__ a,
+    const bf16_t* __restrict__ b, const float* __restrict__ a_log,
+    const void* __restrict__ dt_bias, const int* __restrict__ state_indices,
+    const int* __restrict__ cu_seqlens,
     const int* __restrict__ num_accepted_tokens, StateT* __restrict__ state,
     const bf16_t* __restrict__ output_gate,
-    const void* __restrict__ norm_weight, bf16_t* __restrict__ out,
-    int H, int HV, int state_indices_width, int dt_bias_type,
-    bool norm_weight_is_bf16, float scale, float norm_eps,
-    GdnDecodeStrides strides) {
+    const void* __restrict__ norm_weight, bf16_t* __restrict__ out, int H,
+    int HV, int state_indices_width, int dt_bias_type, bool norm_weight_is_bf16,
+    float scale, float norm_eps, GdnDecodeStrides strides) {
   const int request = blockIdx.x;
   const int value_head = blockIdx.y;
   const int tid = threadIdx.x;
@@ -270,8 +268,8 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
     const Sum2 qk_sums = warp_reduce_sum_pair(q_square, k_square);
     const float q_scale = warp_broadcast(
         lane == 0 ? rsqrtf(qk_sums.x + 1.0e-6f) * scale : 0.0f, 0);
-    const float k_scale = warp_broadcast(
-        lane == 0 ? rsqrtf(qk_sums.y + 1.0e-6f) : 0.0f, 0);
+    const float k_scale =
+        warp_broadcast(lane == 0 ? rsqrtf(qk_sums.y + 1.0e-6f) : 0.0f, 0);
 #pragma unroll
     for (int i = 0; i < 4; ++i) {
       const int dim = lane + i * 32;
@@ -355,14 +353,10 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
       const Sum2 dot_hq_01 = warp_reduce_sum_pair(dot_hq[0], dot_hq[1]);
       const Sum2 dot_hq_23 = warp_reduce_sum_pair(dot_hq[2], dot_hq[3]);
       if (lane == 0) {
-        shared_out[t][chunk * kChunkV + rows[0]] =
-            float_to_bf16(dot_hq_01.x);
-        shared_out[t][chunk * kChunkV + rows[1]] =
-            float_to_bf16(dot_hq_01.y);
-        shared_out[t][chunk * kChunkV + rows[2]] =
-            float_to_bf16(dot_hq_23.x);
-        shared_out[t][chunk * kChunkV + rows[3]] =
-            float_to_bf16(dot_hq_23.y);
+        shared_out[t][chunk * kChunkV + rows[0]] = float_to_bf16(dot_hq_01.x);
+        shared_out[t][chunk * kChunkV + rows[1]] = float_to_bf16(dot_hq_01.y);
+        shared_out[t][chunk * kChunkV + rows[2]] = float_to_bf16(dot_hq_23.x);
+        shared_out[t][chunk * kChunkV + rows[3]] = float_to_bf16(dot_hq_23.y);
       }
 
       const int destination_slot =
@@ -411,8 +405,7 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
               : static_cast<const float*>(norm_weight)[value];
       const int64_t out_offset =
           (static_cast<int64_t>(token) * HV + value_head) * kDimV + value;
-      out[out_offset] =
-          float_to_bf16(output_values[i] * rstd * weight * gate);
+      out[out_offset] = float_to_bf16(output_values[i] * rstd * weight * gate);
     }
   }
 }
@@ -623,8 +616,7 @@ void fused_gdn_decode_post_conv_mtp(
       if (output_gate_activation == "sigmoid") {
         launch.template operator()<bf16_t, ValueHeadsPerKeyHead, true>();
       } else {
-        launch
-            .template operator()<bf16_t, ValueHeadsPerKeyHead, false>();
+        launch.template operator()<bf16_t, ValueHeadsPerKeyHead, false>();
       }
     }
   };

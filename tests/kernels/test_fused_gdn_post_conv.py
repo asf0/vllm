@@ -284,9 +284,7 @@ def test_fused_post_conv_l0():
             torch.bfloat16,
             id="qwen27b-regular-b24",
         ),
-        pytest.param(
-            3, 1, (4,), torch.float32, torch.bfloat16, id="qwen27b-mtp3-b1"
-        ),
+        pytest.param(3, 1, (4,), torch.float32, torch.bfloat16, id="qwen27b-mtp3-b1"),
         pytest.param(
             3,
             1,

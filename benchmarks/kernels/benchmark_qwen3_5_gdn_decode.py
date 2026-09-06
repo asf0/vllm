@@ -59,15 +59,11 @@ class Inputs:
         self.conv_state = torch.empty(
             num_slots, QKV_DIM, CONV_WIDTH - 1, dtype=DTYPE, device=device
         )
-        self.conv_weight = torch.randn(
-            QKV_DIM, CONV_WIDTH, dtype=DTYPE, device=device
-        )
+        self.conv_weight = torch.randn(QKV_DIM, CONV_WIDTH, dtype=DTYPE, device=device)
         self.state = torch.empty(
             num_slots, HV, V, K, dtype=torch.float32, device=device
         )
-        self.ba = torch.randn(
-            self.num_tokens, 2 * HV, dtype=DTYPE, device=device
-        )
+        self.ba = torch.randn(self.num_tokens, 2 * HV, dtype=DTYPE, device=device)
         # Match the non-contiguous views returned by Qwen3.5's packed BA split.
         self.b, self.a = self.ba.chunk(2, dim=-1)
         self.A_log = torch.randn(HV, dtype=torch.float32, device=device)
@@ -128,12 +124,8 @@ def _rearrange_mixed_qkv(
     mixed_qkv: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Mirror QwenGatedDeltaNetAttention.rearrange_mixed_qkv."""
-    query, key, value = torch.split(
-        mixed_qkv, [H * K, H * K, HV * V], dim=-1
-    )
-    fused = torch.cat(
-        [query.reshape(-1), key.reshape(-1), value.reshape(-1)], dim=0
-    )
+    query, key, value = torch.split(mixed_qkv, [H * K, H * K, HV * V], dim=-1)
+    fused = torch.cat([query.reshape(-1), key.reshape(-1), value.reshape(-1)], dim=0)
     q_size = mixed_qkv.shape[0] * H * K
     k_size = q_size
     query = fused[:q_size].view(1, mixed_qkv.shape[0], H, K)
@@ -279,15 +271,14 @@ def main() -> None:
             if args.trace_once:
                 for call in calls:
                     call()
-                torch.cuda.synchronize()
+                torch.accelerator.synchronize()
                 elapsed_ms = float("nan")
                 fused_ms = float("nan")
             else:
                 elapsed_ms = _bench_graph_layers(calls)
                 if num_spec_tokens:
                     fused_inputs = [
-                        Inputs(batch_size, num_spec_tokens)
-                        for _ in range(args.layers)
+                        Inputs(batch_size, num_spec_tokens) for _ in range(args.layers)
                     ]
                     fused_ms = _bench_graph_layers(
                         [

@@ -100,7 +100,7 @@ def main() -> None:
                 try:
                     fn = _provider(provider, x, weight)
                     output = fn()
-                    torch.cuda.synchronize()
+                    torch.accelerator.synchronize()
                     max_abs = (output.float() - reference.float()).abs().max().item()
                     results[provider] = (
                         _bench(fn, args.warmup_ms, args.rep_ms) * 1000,

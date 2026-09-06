@@ -163,9 +163,7 @@ class RocmAttentionMetadataBuilder(AttentionMetadataBuilder[RocmAttentionMetadat
         )
         return attn_metadata
 
-    def update_draft_decode_metadata(
-        self, _metadata: RocmAttentionMetadata
-    ) -> None:
+    def update_draft_decode_metadata(self, _metadata: RocmAttentionMetadata) -> None:
         pass
 
 

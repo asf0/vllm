@@ -59,9 +59,9 @@ def make_inputs(
             cache_dtype
         )
 
-    block_tables = torch.arange(
-        num_pages, device=device, dtype=torch.int32
-    ).view(batch_size, num_pages_per_seq)
+    block_tables = torch.arange(num_pages, device=device, dtype=torch.int32).view(
+        batch_size, num_pages_per_seq
+    )
     # Exercise a non-page-aligned final page.
     seq_lens = torch.full(
         (batch_size,), context_len - 1, device=device, dtype=torch.int32
@@ -87,9 +87,7 @@ def benchmark_case(
         seq_lens,
         k_scale,
         v_scale,
-    ) = make_inputs(
-        batch_size, context_len, page_size, kv_cache_dtype, num_query_heads
-    )
+    ) = make_inputs(batch_size, context_len, page_size, kv_cache_dtype, num_query_heads)
     output = torch.empty_like(query)
     triton_split_output = torch.empty_like(query)
     native_output = torch.empty_like(query)
@@ -202,7 +200,7 @@ def benchmark_case(
     triton_nonsplit()
     triton_splitkv()
     native_splitkv()
-    torch.cuda.synchronize()
+    torch.accelerator.synchronize()
     torch.testing.assert_close(triton_split_output, output, atol=0.02, rtol=0.02)
     torch.testing.assert_close(native_output, output, atol=0.02, rtol=0.02)
 
@@ -227,9 +225,7 @@ def main() -> None:
     parser.add_argument("--batches", type=int, nargs="+", default=[1, 8, 24])
     parser.add_argument("--page-size", type=int, default=1584)
     parser.add_argument("--num-splits", type=int, default=4)
-    parser.add_argument(
-        "--num-query-heads", type=int, choices=[16, 24], default=16
-    )
+    parser.add_argument("--num-query-heads", type=int, choices=[16, 24], default=16)
     parser.add_argument(
         "--kv-cache-dtype", choices=["auto", "fp8_e4m3"], default="auto"
     )
