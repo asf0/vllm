@@ -3175,6 +3175,8 @@ def test_heterogeneous_group_widths_use_fixed_physical_subpools():
         KVCacheGroupSpec(["wide.0", "wide.1"], spec),
         KVCacheGroupSpec(["narrow.0"], spec),
     ]
+    # Mirror the packing pass's padding annotation so the pool path engages.
+    groups[0].physical_bytes_per_block = 2 * page
     vllm_config = VllmConfig(model_config=ModelConfig(max_model_len=16))
     vllm_config.cache_config.kv_cache_layout = "BLHNC"
 
@@ -3281,6 +3283,9 @@ def test_qwen35_mtp3_pool_plan_matches_exact_physical_accounting():
         KVCacheGroupSpec([f"target.{layer}" for layer in range(16)], target),
         KVCacheGroupSpec(["mtp.0"], draft),
     ]
+    # Mirror the packing pass's padding annotation so the pool path engages.
+    for group in groups:
+        group.physical_bytes_per_block = len(group.layer_names) * page
     vllm_config = VllmConfig(model_config=ModelConfig(max_model_len=max_model_len))
     vllm_config.cache_config.kv_cache_layout = "BLHNC"
     vllm_config.cache_config.mamba_cache_mode = "align"
@@ -3316,13 +3321,17 @@ def test_heterogeneous_pools_reject_unsupported_kv_connector():
     vllm_config.cache_config.kv_cache_layout = "BLHNC"
     vllm_config.kv_transfer_config = SimpleNamespace(kv_connector="NixlConnector")
 
+    groups = [
+        KVCacheGroupSpec(["wide.0", "wide.1"], spec),
+        KVCacheGroupSpec(["narrow.0"], spec),
+    ]
+    # Mirror the packing pass's padding annotation so the pool path engages.
+    groups[0].physical_bytes_per_block = 2 * spec.page_size_bytes
+
     with pytest.raises(NotImplementedError, match="heterogeneous-width"):
         kv_cache_utils.get_kv_cache_config_from_groups(
             vllm_config,
-            [
-                KVCacheGroupSpec(["wide.0", "wide.1"], spec),
-                KVCacheGroupSpec(["narrow.0"], spec),
-            ],
+            groups,
             available_memory=31 * spec.page_size_bytes,
         )
 

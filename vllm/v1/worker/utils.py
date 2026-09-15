@@ -116,7 +116,7 @@ class KVBlockZeroer:
         attn_groups_iter: Iterable["AttentionGroup"],
         kernel_block_sizes: list[int],
         static_forward_context: dict[str, Any],
-        num_blocks: int,
+        num_blocks: int | None = None,
         runner_only_attn_layers: set[str] | None = None,
     ) -> None:
         """Precompute the absolute-address table for the Triton zeroing kernel.
@@ -134,6 +134,10 @@ class KVBlockZeroer:
         may differ from the kernel block size (virtual block splitting).
         Each virtual block is represented as an independent segment so its
         physical block stride and zeroed page span remain independent.
+
+        ``num_blocks`` is the single shared pool's logical block count; with
+        heterogeneous-width pools each group addresses its own pool, so the
+        per-group virtual-split ratio is derived from the spec instead.
 
         Only AttentionSpec layers are processed; Mamba layers are skipped.
         """
@@ -184,6 +188,10 @@ class KVBlockZeroer:
                 continue
             kernel_bs = kernel_block_sizes[group.kv_cache_group_id]
             assert spec.block_size % kernel_bs == 0
+            if num_blocks is None:
+                # Heterogeneous pools: each group addresses its own pool, so
+                # derive the virtual-split ratio from the spec alone.
+                ratio = spec.block_size // kernel_bs
             group_id = group.kv_cache_group_id
             group_seen, group_addrs, group_strides, group_page_sizes = (
                 group_segments.setdefault(group_id, ({}, [], [], []))
@@ -199,11 +207,12 @@ class KVBlockZeroer:
                     continue
                 dp = kv.data_ptr()
 
-                assert kv.shape[0] % num_blocks == 0, (
-                    f"{layer_name}: {kv.shape[0]} kernel blocks is not a "
-                    f"multiple of {num_blocks} logical blocks"
-                )
-                ratio = kv.shape[0] // num_blocks
+                if num_blocks is not None:
+                    assert kv.shape[0] % num_blocks == 0, (
+                        f"{layer_name}: {kv.shape[0]} kernel blocks is not a "
+                        f"multiple of {num_blocks} logical blocks"
+                    )
+                    ratio = kv.shape[0] // num_blocks
 
                 el = kv.element_size()
                 block_stride_bytes = kv.stride(0) * el

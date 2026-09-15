@@ -178,7 +178,8 @@ class BlockPool:
         self.pool_id = pool_id
         # All kv-cache blocks.
         self.blocks: list[KVCacheBlock] = [
-            KVCacheBlock(idx, pool=self) for idx in range(num_gpu_blocks)
+            KVCacheBlock(idx, pool=self, pool_id=pool_id)
+            for idx in range(num_gpu_blocks)
         ]
         # Free block queue that constructs and manipulates a doubly linked
         # list of free blocks (including eviction candidates when caching is

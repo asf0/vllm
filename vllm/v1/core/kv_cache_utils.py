@@ -1922,7 +1922,12 @@ def get_kv_cache_config_from_groups(
     layout = vllm_config.cache_config.get_resolved_kv_cache_layout()
     validate_kv_cache_layout(layout, kv_cache_groups)
     group_widths = [_get_group_bytes_per_block(group) for group in kv_cache_groups]
-    uses_multiple_pools = len({width for width in group_widths if width > 0}) > 1
+    # Split into fixed-width physical pools only for groups the packing pass
+    # deliberately padded (physical_bytes_per_block annotated); differing raw
+    # page sums mean overlaying groups that share one pool, as upstream does.
+    uses_multiple_pools = any(
+        group.physical_bytes_per_block is not None for group in kv_cache_groups
+    ) and len({width for width in group_widths if width > 0}) > 1
     if uses_multiple_pools:
         transfer_config = vllm_config.kv_transfer_config
         if transfer_config is not None and transfer_config.kv_connector is not None:
@@ -1962,11 +1967,14 @@ def get_kv_cache_config_from_groups(
     # group 1: | C [ blk 0 | blk 1 | ... ] | D [ blk 0 | blk 1 | ... ] |
 
     kv_cache_tensors = []
+    shared_bytes_per_block = _get_kv_cache_bytes_per_block(kv_cache_groups)
     for group_id, group in enumerate(kv_cache_groups):
         if kv_cache_pools is None:
             group_num_blocks = num_blocks
             group_offset = 0
-            group_block_stride = group_widths[group_id]
+            # Upstream single-pool semantics: every group strides by the
+            # widest block so overlaying groups alias the same block tile.
+            group_block_stride = shared_bytes_per_block
         else:
             pool = kv_cache_pools[group_to_pool[group_id]]
             group_num_blocks = pool.num_blocks
@@ -2710,11 +2718,19 @@ def _max_memory_usage_bytes_from_groups(
             total_blocks += 1
         return total_blocks * (len(mla_names) * mla_page + len(idx_names) * idx_page)
 
-    return sum(
-        _get_group_bytes_per_block(group)
-        * _get_group_max_blocks_per_request(vllm_config, group)
-        for group in kv_cache_groups
-    )
+    bytes_per_block = _pool_bytes_per_block(kv_cache_groups)
+    total_blocks = 0
+    for group in kv_cache_groups:
+        spec = group.kv_cache_spec
+        if isinstance(spec, UniformTypeKVCacheSpecs):
+            total_blocks += spec.max_memory_usage_pages(vllm_config)
+        else:
+            total_blocks += cdiv(
+                spec.max_memory_usage_bytes(vllm_config),
+                spec.page_size_bytes,
+            )
+
+    return bytes_per_block * total_blocks
 
 
 def _estimate_max_model_len_from_groups(

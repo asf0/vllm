@@ -1342,11 +1342,17 @@ def test_heterogeneous_pool_preemption_frees_and_resumes_all_groups():
     scheduler.finish_requests(requests[0].request_id, RequestStatus.FINISHED_ABORTED)
     resumed = scheduler.schedule()
     assert requests[1].status == RequestStatus.RUNNING
-    assert resumed.scheduled_new_reqs[0].block_ids is not None
-    assert [len(ids) for ids in resumed.scheduled_new_reqs[0].block_ids] == [6, 6]
+    # MRV2 surfaces resumed requests via scheduled_new_reqs; MRV1 via
+    # scheduled_cached_reqs. Either way the pool-local block ids must match.
+    if scheduler.use_v2_model_runner:
+        resumed_block_ids = resumed.scheduled_new_reqs[0].block_ids
+    else:
+        resumed_block_ids = resumed.scheduled_cached_reqs.new_block_ids[0]
+    assert resumed_block_ids is not None
+    assert [len(ids) for ids in resumed_block_ids] == [6, 6]
     assert all(
         0 < block_id < num_blocks
-        for group_ids in resumed.scheduled_new_reqs[0].block_ids
+        for group_ids in resumed_block_ids
         for block_id in group_ids
     )
 
