@@ -1925,9 +1925,10 @@ def get_kv_cache_config_from_groups(
     # Split into fixed-width physical pools only for groups the packing pass
     # deliberately padded (physical_bytes_per_block annotated); differing raw
     # page sums mean overlaying groups that share one pool, as upstream does.
-    uses_multiple_pools = any(
-        group.physical_bytes_per_block is not None for group in kv_cache_groups
-    ) and len({width for width in group_widths if width > 0}) > 1
+    uses_multiple_pools = (
+        any(group.physical_bytes_per_block is not None for group in kv_cache_groups)
+        and len({width for width in group_widths if width > 0}) > 1
+    )
     if uses_multiple_pools:
         transfer_config = vllm_config.kv_transfer_config
         if transfer_config is not None and transfer_config.kv_connector is not None:

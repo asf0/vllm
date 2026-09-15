@@ -31,6 +31,7 @@ from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.multimodal.encoder_budget import MultiModalBudget
 from vllm.multimodal.utils import get_mm_features_in_window
+from vllm.v1.core.block_pool import BlockPool
 from vllm.v1.core.encoder_cache_manager import (
     EncoderCacheManager,
     EncoderDecoderCacheManager,
@@ -3078,7 +3079,9 @@ class Scheduler(SchedulerInterface):
         # and every Mamba block but the aligned snapshot -- all point at this
         # one block, shared by every request. It carries no request's data, so
         # it can neither fail for a request nor be evicted on its behalf.
-        null_block_id = self.kv_cache_manager.block_pool.null_block.block_id
+        block_pool = self.kv_cache_manager.block_pool
+        assert isinstance(block_pool, BlockPool)
+        null_block_id = block_pool.null_block.block_id
         for request in requests:
             is_affected = False
             marked_invalid_block = False

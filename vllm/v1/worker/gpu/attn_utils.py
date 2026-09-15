@@ -37,6 +37,7 @@ from vllm.v1.worker.utils import (
     AttentionGroup,
     add_kv_sharing_layers_to_kv_cache_groups,
     allocate_kv_cache,
+    bind_kv_cache,
     bind_kv_cache_to_layers,
     prepare_kernel_block_sizes,
 )
@@ -370,13 +371,24 @@ def init_kv_cache(
     bindable_caches = {
         name: cache for name, cache in kv_caches.items() if name in forward_context
     }
-    bind_kv_cache_to_layers(
-        bindable_caches,
-        forward_context,
-        num_attn_module,
-        kv_cache_groups=kv_cache_config.kv_cache_groups,
-        runner_kv_cache_group_ids=runner_kv_cache_group_ids,
-    )
+    if runner_kv_cache_group_ids is not None:
+        # Bind runner caches in model-layer order, recording each layer's group.
+        runner_kv_caches: list[torch.Tensor] = []
+        bind_kv_cache(
+            bindable_caches,
+            forward_context,
+            runner_kv_caches,
+            num_attn_module,
+            kv_cache_groups=kv_cache_config.kv_cache_groups,
+            runner_kv_cache_group_ids=runner_kv_cache_group_ids,
+        )
+    else:
+        bind_kv_cache_to_layers(
+            bindable_caches,
+            forward_context,
+            num_attn_module,
+            kv_cache_groups=kv_cache_config.kv_cache_groups,
+        )
     return kv_caches
 
 
