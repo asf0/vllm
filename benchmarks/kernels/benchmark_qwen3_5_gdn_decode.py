@@ -10,6 +10,7 @@ keys/values, BF16 activations and convolution state, and FP32 recurrent state.
 Example:
     python benchmarks/kernels/benchmark_qwen3_5_gdn_decode.py \
         --batches 1 8 24 --mtp 0 3 --layers 48
+
 """
 
 import argparse

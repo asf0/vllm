@@ -512,11 +512,7 @@ def _warmup_kernels(
                 req_idx = model_runner.req_states.req_id_to_index[
                     req_ids[step_indices[0]]
                 ]
-                sampler.add_request(
-                    req_idx,
-                    prompt_len,
-                    SamplingParams(temperature=0.0),
-                )
+                sampler.add_request(req_idx, SamplingParams(temperature=0.0))
                 sampler.apply_staged_writes()
             _run_decode_step(step_indices, step_spec_flags)
 

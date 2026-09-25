@@ -478,8 +478,8 @@ def allocate_kv_cache(
         warmup_rocm_skinny_gemm_workspaces(device)
         # Pad to the page granularity MoRIIO needs to register the shared
         # backing as a single RDMA memory region. Other platforms keep the
-        # exact-size allocation: NIXL and SimpleCPUOffload rely on
-        # storage.nbytes() matching the logical KV size (see #53974).
+        # exact-size allocation (see #53974), so anything reading
+        # storage.nbytes() has to tolerate the tail on ROCm alone.
         page_size = 4096
         buf_size = ((raw_size + page_size - 1) // page_size) * page_size
     else:
@@ -682,6 +682,8 @@ def bind_kv_cache(
         runner_kv_caches: The kv_cache declared by ModelRunner.
         kv_cache_groups: The KV cache groups of the model, used to resolve
             layers that share a KV cache.
+        runner_kv_cache_group_ids: If given, filled in parallel with
+            `runner_kv_caches` with each entry's KV cache group id.
 
     """
     # Bind kv_caches to ModelRunner

@@ -462,7 +462,7 @@ class KVCacheManager:
         ----------------------------------------------------------------------
         ```
 
-        Abbrivations:
+        Abbreviations:
 
         ```
         comp      = request.num_computed_tokens

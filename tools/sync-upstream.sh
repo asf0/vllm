@@ -5,7 +5,7 @@
 # the fork's main. Publishes only when merge + checks pass; on conflict it
 # aborts and leaves the branch untouched.
 #
-# Usage: scripts/sync-upstream.sh [--check]
+# Usage: tools/sync-upstream.sh [--check]
 #   --check  report status only; do not merge or push
 
 set -euo pipefail
@@ -34,10 +34,9 @@ CURRENT_BRANCH=$(git branch --show-current)
 [[ "$CURRENT_BRANCH" == "$SYNC_BRANCH" ]] || die "checkout $SYNC_BRANCH first (on: $CURRENT_BRANCH)"
 
 git fetch "$UPSTREAM" "$UPSTREAM_BRANCH" 2>&1 | sed 's/^/  /'
-BASE=$(git rev-list --left-right --count "$SYNC_BRANCH...$UPSTREAM/$UPSTREAM_BRANCH")
-UPSTREAM_AHEAD=$(echo "$BASE" | cut -d$'\t' -f1)
-LOCAL_AHEAD=$(echo "$BASE" | cut -d$'\t' -f2 | cut -d' ' -f1)
-NEW_COMMITS=$(git rev-list --count "$SYNC_BRANCH..$UPSTREAM/$UPSTREAM_BRANCH")
+read -r LOCAL_AHEAD NEW_COMMITS < <(
+  git rev-list --left-right --count "$SYNC_BRANCH...$UPSTREAM/$UPSTREAM_BRANCH"
+)
 
 echo "state: $SYNC_BRANCH has $LOCAL_AHEAD local commits; upstream has $NEW_COMMITS new"
 
