@@ -250,9 +250,8 @@ def test_spec_warmup_switches_singleton_request_to_greedy():
     )
 
     runner.sampler.add_request.assert_called_once()
-    req_idx, prompt_len, sampling_params = runner.sampler.add_request.call_args.args
+    req_idx, sampling_params = runner.sampler.add_request.call_args.args
     assert req_idx == 0
-    assert prompt_len == runner.decode_query_len + 1
     assert sampling_params.temperature == 0.0
     runner.sampler.apply_staged_writes.assert_called_once_with()
 
