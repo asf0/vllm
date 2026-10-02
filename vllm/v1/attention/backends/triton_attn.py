@@ -39,7 +39,10 @@ from vllm.v1.attention.ops.triton_reshape_and_cache_flash import (
     triton_reshape_and_cache_flash,
     triton_reshape_and_cache_flash_per_token_head_quant,
 )
-from vllm.v1.attention.ops.triton_unified_attention import unified_attention
+from vllm.v1.attention.ops.triton_unified_attention import (
+    MAX_3D_BLOCK_M,
+    unified_attention,
+)
 from vllm.v1.kv_cache_interface import (
     AttentionSpec,
     KVQuantMode,
@@ -152,10 +155,17 @@ class TritonAttentionMetadataBuilder(AttentionMetadataBuilder[TritonAttentionMet
             )
 
         self.num_par_softmax_segments = NUM_PAR_SOFTMAX_SEGMENTS
+        # Speculative-decoding verification batches take the 3D kernel too
+        # when each sequence's query tokens fit one q-block, so the buffers
+        # hold a row per query token.
+        query_len = 1 + vllm_config.num_speculative_tokens
+        if query_len * (self.num_heads_q // self.num_heads_kv) > MAX_3D_BLOCK_M:
+            query_len = 1
+        segm_rows = self.seq_threshold_3D * query_len
         headdim_padded = next_power_of_2(self.headdim)
         self.softmax_segm_output = torch.empty(
             (
-                self.seq_threshold_3D,
+                segm_rows,
                 self.num_heads_q,
                 self.num_par_softmax_segments,
                 headdim_padded,
@@ -164,12 +174,12 @@ class TritonAttentionMetadataBuilder(AttentionMetadataBuilder[TritonAttentionMet
             device=device,
         )
         self.softmax_segm_max = torch.empty(
-            (self.seq_threshold_3D, self.num_heads_q, self.num_par_softmax_segments),
+            (segm_rows, self.num_heads_q, self.num_par_softmax_segments),
             dtype=torch.float32,
             device=device,
         )
         self.softmax_segm_expsum = torch.empty(
-            (self.seq_threshold_3D, self.num_heads_q, self.num_par_softmax_segments),
+            (segm_rows, self.num_heads_q, self.num_par_softmax_segments),
             dtype=torch.float32,
             device=device,
         )
