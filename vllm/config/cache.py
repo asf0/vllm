@@ -215,6 +215,8 @@ class CacheConfig:
     replayssm_buffer_len, but this is not required."""
     use_kda_recoverssm: bool = field(default=False, init=False)
     """Whether Kimi-K3 KDA uses RecoverSSM speculative decode."""
+    use_gdn_recoverssm: bool = field(default=False, init=False)
+    """Whether Qwen GatedDeltaNet uses RecoverSSM speculative decode."""
 
     # Will be set after profiling.
     num_gpu_blocks: int | None = field(default=None, init=False)
