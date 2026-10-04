@@ -283,8 +283,11 @@ def _prepare_commit_plan_kernel(
             tl.int32
         )
         final_num_computed = num_computed + commit_len
+        # The running state lives in the block holding the last computed
+        # token. A count that lands exactly on a boundary must not select the
+        # next block: no speculative blocks are reserved, so it may not exist.
         final_state_col = tl.minimum(
-            final_num_computed // mamba_block_size, block_table_width - 1
+            (final_num_computed - 1) // mamba_block_size, block_table_width - 1
         )
         final_state_idx = tl.load(
             block_table_ptr
